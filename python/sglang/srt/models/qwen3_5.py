@@ -457,6 +457,9 @@ class Qwen3_5GatedDeltaNet(nn.Module):
         2. Core attention (custom op)
         3. Output projection
         """
+        if hidden_states.shape[0] == 0:
+            return hidden_states
+
         projected_states_qkvz, projected_states_ba = self._forward_input_proj(
             hidden_states
         )
@@ -604,6 +607,11 @@ class Qwen3_5LinearDecoderLayer(nn.Module):
         **kwargs,
     ):
         forward_batch = kwargs.get("forward_batch", None)
+
+        if hidden_states.shape[0] == 0:
+            if residual is None:
+                residual = hidden_states
+            return hidden_states, residual
 
         hidden_states, residual = (
             self.layer_communicator.prepare_attn_and_capture_last_layer_outputs(
@@ -876,6 +884,11 @@ class Qwen3_5AttentionDecoderLayer(nn.Module):
         captured_last_layer_outputs: Optional[list[torch.Tensor]] = None,
         **kwargs,
     ):
+        if hidden_states.shape[0] == 0:
+            if residual is None:
+                residual = hidden_states
+            return hidden_states, residual
+
         hidden_states, residual = (
             self.layer_communicator.prepare_attn_and_capture_last_layer_outputs(
                 hidden_states,

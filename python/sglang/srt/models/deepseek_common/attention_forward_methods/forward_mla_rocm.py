@@ -426,6 +426,14 @@ def rocm_absorb_v_bmm(
     return attn_bmm_output
 
 
+def _fused_write_slots(kv_pool, out_cache_loc: torch.Tensor) -> torch.Tensor:
+    """Physical, stride-1 slots: the AITER fused writers bypass set_mla_kv_buffer()'s
+    HiSparse logical-to-device mapping and read slot_mapping with stride 1."""
+    if isinstance(kv_pool, HiSparseDSATokenToKVPool):
+        out_cache_loc = kv_pool.translate_loc_to_hisparse_device(out_cache_loc)
+    return out_cache_loc.contiguous()
+
+
 def _fused_rope_cat_and_cache(
     attn: DeepseekV2AttentionMLA,
     q_nope_out: torch.Tensor,
@@ -448,18 +456,13 @@ def _fused_rope_cat_and_cache(
         else kv_cache_dtype
     )
     kv_pool = get_token_to_kv_pool()
-    if isinstance(kv_pool, HiSparseDSATokenToKVPool):
-        # The fused write bypasses set_mla_kv_buffer()'s logical-to-device mapping.
-        out_cache_loc = kv_pool.translate_loc_to_hisparse_device(out_cache_loc)
-    # AITER reads slot_mapping with stride 1, including on the resident path.
-    out_cache_loc = out_cache_loc.contiguous()
     return fused_qk_rope_cat_and_cache_mla(
         q_nope_out,
         q_pe,
         k_nope,
         k_pe,
         kv_pool.layer_router.read(attn.attn_mqa.layer_id).key(),
-        out_cache_loc,
+        _fused_write_slots(kv_pool, out_cache_loc),
         positions,
         attn.rotary_emb.cos_cache,
         attn.rotary_emb.sin_cache,
@@ -514,6 +517,7 @@ def _fused_bmm_rope_cat_and_cache(
     the first half of this kernel's grid.
     """
     kv_cache_dtype = fp8_dtype if attn.kv_cache_dtype == "fp8_e4m3" else q_nope.dtype
+    kv_pool = get_token_to_kv_pool()
     # Same weights and group size the fp8 branch of rocm_absorb_q_bmm passes to
     # batched_gemm_a8w8_a_per_token_group_prequant_w_per_batched_tensor_quant;
     # that call takes q_nope as (B, QH, P) and transposes internally, while this
@@ -525,8 +529,8 @@ def _fused_bmm_rope_cat_and_cache(
         q_pe,
         k_nope,
         k_pe,
-        get_kv_layers().read(attn.attn_mqa.layer_id).key(),
-        out_cache_loc,
+        kv_pool.layer_router.read(attn.attn_mqa.layer_id).key(),
+        _fused_write_slots(kv_pool, out_cache_loc),
         positions,
         attn.rotary_emb.cos_cache,
         attn.rotary_emb.sin_cache,

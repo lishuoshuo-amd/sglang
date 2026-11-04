@@ -132,5 +132,36 @@ class TestRocmHiSparseFusedKVKernel(CustomTestCase):
             self.check_cache({0: 3, 1: 5})
 
 
+class TestRocmHiSparseFusedBmmKVKernel(TestRocmHiSparseFusedKVKernel):
+    """Run the real fused absorb BMM + RoPE writer against the same guarded rows."""
+
+    def setUp(self):
+        super().setUp()
+        layers = patch.object(
+            self.forward, "get_kv_layers", lambda: self.pool.layer_router
+        )
+        layers.start()
+        self.addCleanup(layers.stop)
+        self.q_unabsorbed = torch.ones((3, 8, 128), dtype=torch.bfloat16, device="cuda")
+        # Same layout as the loader's w_kc: (heads, qk_nope_head_dim, kv_lora_rank).
+        self.attn.w_kc = (
+            torch.ones((8, 512, 128), device="cuda")
+            .to(torch.float8_e4m3fn)
+            .transpose(1, 2)
+        )
+        self.attn.w_scale = torch.ones(1, device="cuda")
+
+    def write(self):
+        return self.forward._fused_bmm_rope_cat_and_cache(
+            self.attn,
+            self.q_unabsorbed,
+            self.qr,
+            self.kn,
+            self.kr,
+            self.positions,
+            self.locations,
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

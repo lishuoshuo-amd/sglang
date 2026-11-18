@@ -396,6 +396,7 @@ def prepare_fp4_prefill_workspace(
         PrefillScheduleBuffers,
         build_prefill_schedule,
         padded_page_table_shape,
+        prefill_table_columns,
     )
 
     c4_seq_lens = _as_int32_1d(c4_seq_lens)
@@ -408,7 +409,9 @@ def prepare_fp4_prefill_workspace(
             # The prep kernel writes every element it hands back, so neither the
             # padded table nor the row metadata needs a zero-fill dispatch here.
             guarded_page_table=torch.empty(
-                (rows, padded_width + 4), dtype=torch.int32, device=device
+                (rows, prefill_table_columns(padded_width)),
+                dtype=torch.int32,
+                device=device,
             ),
             row_to_batch=buffers.row_to_batch,
             local_starts=buffers.local_starts,

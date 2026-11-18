@@ -64,6 +64,7 @@ from sglang.kernels.ops.attention.dsv4.fp4_indexer_rope_hip import (
 )
 from sglang.kernels.ops.attention.dsv4.fp4_indexer_schedule_hip import (
     build_decode_schedule,
+    prefill_table_columns,
 )
 from sglang.kernels.ops.attention.dsv4.fp4_rope_fake_quant import (
     rope_tail_fake_quant_fp4,
@@ -630,6 +631,27 @@ def test_guard_page_table_refreshes_reused_buffer() -> None:
     assert refreshed.data_ptr() == guarded.data_ptr()
     torch.testing.assert_close(refreshed[:, :width], first + 100)
     assert refreshed[:, width:].eq(0).all()
+
+
+@pytest.mark.parametrize("logical_width", [1, 5, 60, 252, 253, 600])
+def test_prefill_workspace_buckets_table_width(logical_width: int) -> None:
+    rows = 3
+    page_table = torch.arange(
+        1, rows * logical_width + 1, device=get_device(), dtype=torch.int32
+    ).reshape(rows, logical_width)
+    c4_seq_lens = torch.full(
+        (rows,), logical_width * PAGE_SIZE, device=get_device(), dtype=torch.int32
+    )
+
+    ws = prepare_fp4_prefill_workspace(page_table, c4_seq_lens)
+
+    padded_width = max(4, -(-logical_width // 4) * 4)
+    width = ws.guarded_page_table.shape[1]
+    assert width == prefill_table_columns(padded_width)
+    assert width % 256 == 0 and padded_width + 4 <= width < padded_width + 4 + 256
+    assert ws.max_seq_len == padded_width * PAGE_SIZE
+    torch.testing.assert_close(ws.guarded_page_table[:, :logical_width], page_table)
+    assert ws.guarded_page_table[:, logical_width:].eq(0).all()
 
 
 @pytest.mark.parametrize(

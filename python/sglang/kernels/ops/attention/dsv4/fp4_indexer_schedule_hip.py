@@ -62,7 +62,20 @@ def _pad_page_table_tile(
     tl.store(dst_ptr + row * dst_stride + cols, vals, mask=inside)
 
 
-@triton.jit
+# The ints follow each batch's rows and table widths; specializing them on 1 / multiple
+# of 16 compiles hundreds of variants on the request path.
+@triton.jit(
+    do_not_specialize=[
+        "pt_src_stride",
+        "pt_dst_stride",
+        "T",
+        "P",
+        "s_max",
+        "w_src",
+        "w_dst",
+        "pt_tiles_per_row",
+    ]
+)
 def _prefill_schedule_prep_kernel(
     le_ptr,  # [T] int32  local_ends (== c4_seq_lens)
     chunks_ptr,  # [T] int32  out
@@ -147,7 +160,7 @@ def _prefill_schedule_prep_kernel(
         )
 
 
-@triton.jit
+@triton.jit(do_not_specialize=["src_stride", "dst_stride", "w_src", "w_dst"])
 def _pad_page_table_kernel(
     src_ptr,
     dst_ptr,

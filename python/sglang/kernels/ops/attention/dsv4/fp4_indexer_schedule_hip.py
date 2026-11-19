@@ -62,7 +62,20 @@ def _pad_page_table_tile(
     tl.store(dst_ptr + row * dst_stride + cols, vals, mask=inside)
 
 
-@triton.jit
+# The ints follow each batch's rows and table widths; specializing them on 1 / multiple
+# of 16 compiles hundreds of variants on the request path.
+@triton.jit(
+    do_not_specialize=[
+        "pt_src_stride",
+        "pt_dst_stride",
+        "T",
+        "P",
+        "s_max",
+        "w_src",
+        "w_dst",
+        "pt_tiles_per_row",
+    ]
+)
 def _prefill_schedule_prep_kernel(
     le_ptr,  # [T] int32  local_ends (== c4_seq_lens)
     chunks_ptr,  # [T] int32  out
@@ -147,7 +160,7 @@ def _prefill_schedule_prep_kernel(
         )
 
 
-@triton.jit
+@triton.jit(do_not_specialize=["src_stride", "dst_stride", "w_src", "w_dst"])
 def _pad_page_table_kernel(
     src_ptr,
     dst_ptr,
@@ -272,6 +285,12 @@ class PrefillScheduleBuffers:
         self.total_splits = self.storage[5 * rows + 1 : 5 * rows + 2]
 
 
+def prefill_table_columns(padded_width: int) -> int:
+    """Guarded prefill table width in 256-column steps: AITER compiles the FP4 prefill
+    logits kernel per block-table width, so context-tracking widths compile per request."""
+    return -(-(padded_width + 4) // 256) * 256
+
+
 def build_prefill_schedule(
     *,
     page_table: torch.Tensor,
@@ -309,12 +328,12 @@ def build_prefill_schedule(
         "silently drop rows past the last slot"
     )
 
+    w_dst = prefill_table_columns(padded_width)
     if guarded_out is None:
-        guarded_out = page_table.new_empty((rows, padded_width + 4))
+        guarded_out = page_table.new_empty((rows, w_dst))
     if buffers is None:
         buffers = PrefillScheduleBuffers(total_rows, page_table.device)
 
-    w_dst = padded_width + 4
     pt_tiles_per_row = triton.cdiv(w_dst, _PT_BLOCK)
 
     if not buffers.fused:

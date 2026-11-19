@@ -87,7 +87,7 @@ from sglang.srt.runtime_context import (
     get_parallel,
     get_serving,
 )
-from sglang.srt.utils import is_cuda, is_gfx95_supported, is_hip
+from sglang.srt.utils import is_cuda, is_gfx95_supported, is_gfx942_supported, is_hip
 
 logger = logging.getLogger(__name__)
 
@@ -98,9 +98,9 @@ _is_hip = is_hip()
 
 
 def _cuda_kernels(t: torch.Tensor) -> bool:
-    """True where the Triton kernels apply (CUDA and gfx950); other ROCm GPUs and CPU
-    take the torch paths."""
-    return t.is_cuda and (is_cuda() or is_gfx95_supported())
+    """True where the Triton kernels apply (CUDA, gfx950 and gfx942); other ROCm GPUs
+    and CPU take the torch paths."""
+    return t.is_cuda and (is_cuda() or is_gfx95_supported() or is_gfx942_supported())
 
 
 def _is_prime(n: int) -> bool:

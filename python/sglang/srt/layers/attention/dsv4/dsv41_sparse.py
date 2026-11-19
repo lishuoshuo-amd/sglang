@@ -24,12 +24,14 @@ from sglang.srt.layers.linear import ReplicatedLinear
 from sglang.srt.layers.quantization.base_config import QuantizationConfig
 from sglang.srt.layers.utils.common import add_prefix
 from sglang.srt.speculative.ragged_verify import ragged_verify_token_rows
-from sglang.srt.utils import is_gfx95_supported
+from sglang.srt.utils import is_gfx95_supported, is_gfx942_supported
 
 
 def _fused_dsv41_kernels(x: torch.Tensor) -> bool:
-    # validated on CUDA and gfx950; other ROCm GPUs keep the torch forms
-    return x.is_cuda and (torch.version.cuda is not None or is_gfx95_supported())
+    # validated on CUDA, gfx950 and gfx942; other ROCm GPUs keep the torch forms
+    return x.is_cuda and (
+        torch.version.cuda is not None or is_gfx95_supported() or is_gfx942_supported()
+    )
 
 
 def _rope_fq4(x, freqs, rope_dim, *, compressed_kv=False, positions=None):
